@@ -106,13 +106,11 @@ volumes:
 - Docker plugin enabled
 - Git plugin (optional, for cloning)
 
-### Method 1: Using Docker Compose in Unraid
+### Method 1: Using Docker Compose in Unraid (Recommended)
 
-#### Step 1: Upload Files to Unraid
+#### Step 1: Where to Clone
 
-1. Enable SMB sharing on your Unraid server
-2. Copy the filebrowser repository to a share (e.g., `/mnt/user/appdata/filebrowser`)
-3. Or clone directly via terminal:
+Clone to your **appdata** folder (recommended):
 
 ```bash
 mkdir -p /mnt/user/appdata/filebrowser
@@ -120,51 +118,55 @@ cd /mnt/user/appdata/filebrowser
 git clone https://github.com/your-username/filebrowser.git .
 ```
 
-#### Step 2: Create docker-compose.yml
+**Recommended location:** `/mnt/user/appdata/filebrowser`
 
-Create `docker-compose.yml` in the appdata folder:
+**Why this location?**
+- Persists across reboots
+- Easy to backup
+- Separated from your file storage
+- On your array or cache pool
 
-```yaml
-version: '3.8'
+#### Step 2: Configure File Storage
 
-services:
-  filebrowser:
-    build:
-      context: /mnt/user/appdata/filebrowser
-      dockerfile: _docker/Dockerfile.slim
-    container_name: filebrowser
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    volumes:
-      - /mnt/user/your_files:/srv
-      - filebrowser_db:/database
-      - filebrowser_config:/config
-    environment:
-      - FB_DATABASE=/database/filebrowser.db
+Edit `docker-compose.yml` and set your file path:
 
-volumes:
-  filebrowser_db:
-    driver: local
-  filebrowser_config:
-    driver: local
+```bash
+cd /mnt/user/appdata/filebrowser
+nano docker-compose.yml
 ```
 
-#### Step 3: Deploy Using Command Line
+Change the volume mapping:
+```yaml
+volumes:
+  # Replace 'files:/srv' with your actual file location:
+  - /mnt/user/your_media:/srv  # Your movies, documents, etc.
+  - filebrowser_db:/database
+  - filebrowser_config:/config
+```
 
-1. SSH into your Unraid server
-2. Run:
+#### Step 3: Deploy
 
 ```bash
 cd /mnt/user/appdata/filebrowser
 docker-compose up -d --build
 ```
 
-#### Step 4: Verify in Unraid UI
+#### Step 4: Access FileBrowser
 
-1. Go to **Docker** tab
-2. You should see the `filebrowser` container running
-3. Check logs if needed: `docker logs filebrowser`
+Open browser to: `http://<unraid-ip>:8080`
+
+Default login: `admin` / `admin`
+
+#### Updating (Future)
+
+To update to the latest version:
+
+```bash
+cd /mnt/user/appdata/filebrowser
+git pull
+docker-compose down
+docker-compose up -d --build
+```
 
 ### Method 2: Using Unraid's Docker Tab (Manual Template)
 
@@ -192,6 +194,142 @@ If you prefer not to use docker-compose:
    - `80` → `8080`
 
 6. **Extra Parameters**: `--restart=unless-stopped`
+
+---
+
+### Method 3: Unraid with Traefik (Reverse Proxy)
+
+For HTTPS with automatic SSL certificates:
+
+#### Step 1: Clone Repository
+
+```bash
+mkdir -p /mnt/user/appdata/traefik
+mkdir -p /mnt/user/appdata/filebrowser
+cd /mnt/user/appdata/filebrowser
+git clone https://github.com/your-username/filebrowser.git .
+```
+
+#### Step 2: Create Traefik Directories
+
+```bash
+mkdir -p /mnt/user/appdata/traefik/letsencrypt
+mkdir -p /mnt/user/appdata/traefik/certs
+```
+
+#### Step 3: Create Traefik Configuration
+
+```bash
+nano /mnt/user/appdata/traefik/traefik.yml
+```
+
+```yaml
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  insecure: true
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    network: fb_network
+    exposedByDefault: false
+
+entryPoints:
+  http:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: https
+          scheme: https
+          permanent: true
+  https:
+    address: ":443"
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "your-email@example.com"
+      storage: "/letsencrypt/acme.json"
+      httpChallenge:
+        entryPoint: http
+
+log:
+  level: INFO
+```
+
+#### Step 4: Create docker-compose.yml with Traefik
+
+Create at `/mnt/user/appdata/filebrowser/docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/user/appdata/traefik/traefik.yml:/traefik.yml:ro
+      - /mnt/user/appdata/traefik/letsencrypt:/letsencrypt
+    networks:
+      - fb_network
+    labels:
+      - "traefik.enable=true"
+
+  filebrowser:
+    build:
+      context: /mnt/user/appdata/filebrowser
+      dockerfile: _docker/Dockerfile.slim
+    container_name: filebrowser
+    restart: unless-stopped
+    networks:
+      - fb_network
+    volumes:
+      - /mnt/user/your_files:/srv
+      - filebrowser_db:/database
+      - filebrowser_config:/config
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.filebrowser.rule=Host(`files.your-domain.com`)"
+      - "traefik.http.routers.filebrowser.entrypoints=https"
+      - "traefik.http.routers.filebrowser.tls.certresolver=letsencrypt"
+      - "traefik.http.services.filebrowser.loadbalancer.server.port=80"
+
+networks:
+  fb_network:
+    driver: bridge
+
+volumes:
+  filebrowser_db:
+    driver: local
+  filebrowser_config:
+    driver: local
+```
+
+#### Step 5: Start the Stack
+
+```bash
+cd /mnt/user/appdata/filebrowser
+docker-compose up -d --build
+```
+
+#### Step 6: Access
+
+- FileBrowser: `https://files.your-domain.com`
+- Traefik Dashboard: `https://your-unraid-ip:8080`
+
+**Note:** Replace `your-domain.com` and `your-email@example.com` with your actual values.
 
 ---
 
