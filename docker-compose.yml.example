@@ -1,0 +1,205 @@
+# FileBrowser Docker Compose Configuration
+# Copy this file to docker-compose.yml and customize as needed
+
+version: '3.8'
+
+# ============================================================
+# NETWORK CONFIGURATION
+# ============================================================
+# Uncomment the networks section to create an internal network
+# This isolates FileBrowser from other services and allows
+# secure communication without exposing ports to the host
+# ============================================================
+
+# networks:
+#   fb_network:
+#     driver: bridge
+#     ipam:
+#       config:
+#         - subnet: 172.28.0.0/16
+
+services:
+  # ============================================================
+  # FILEBROWSER SERVICE
+  # ============================================================
+  filebrowser:
+    # Build image from local source
+    build:
+      context: .
+      dockerfile: _docker/Dockerfile.slim
+      args:
+        # Optional: Specify version and revision
+        # VERSION: "testing"
+        # REVISION: "local"
+
+    container_name: filebrowser
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+    # ----------------------------------------------------
+    # PORT MAPPING
+    # ----------------------------------------------------
+    # Option 1: Direct host binding (exposes to host network)
+    # Uncomment to use:
+    ports:
+      - "8080:80"
+
+    # Option 2: Use internal network only (no host ports exposed)
+    # Remove 'ports' section and uncomment below to use internal network
+    # Use this with a reverse proxy on the same network
+    # networks:
+    #   - fb_network
+    # ports: []  # Comment out ports section when using internal network
+
+    # ----------------------------------------------------
+    # VOLUME MOUNTS
+    # ----------------------------------------------------
+    volumes:
+      # REQUIRED: File storage location
+      # Replace 'files:/srv' with one of these options:
+      #
+      # Option A: Named volume (data persists in Docker)
+      #   files:/srv
+      #
+      # Option B: Host directory (recommended for large file collections)
+      #   Add your path below:
+      #   - /path/to/your/files:/srv
+
+      # Default: Named volume (change this to your file location)
+      - files:/srv
+
+      # Database volume (persists database across rebuilds)
+      - database:/database
+
+      # Config volume (persists settings across rebuilds)
+      - config:/config
+
+    # ----------------------------------------------------
+    # ENVIRONMENT VARIABLES
+    # ----------------------------------------------------
+    environment:
+      # Database location (default path inside container)
+      - FB_DATABASE=/database/filebrowser.db
+
+      # Optional: Custom configuration file
+      # - FB_CONFIG=/config/settings.json
+
+      # Optional: Enable debug logging
+      # - FB_LOG_LEVEL=debug
+
+    # ----------------------------------------------------
+    # HEALTHCHECK
+    # ----------------------------------------------------
+    # Container health monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # ----------------------------------------------------
+    # RESOURCE LIMITS (Optional)
+    # ----------------------------------------------------
+    # Uncomment to limit container resources
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1.0'
+    #       memory: 512M
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 256M
+
+    # ----------------------------------------------------
+    # USER/PERMISSIONS (Optional)
+    # ----------------------------------------------------
+    # Run as specific user (UID:GID)
+    # user: "1000:1000"
+
+# ============================================================
+# NAMED VOLUMES
+# ============================================================
+# These volumes persist data across container rebuilds
+# ============================================================
+volumes:
+  # File storage volume
+  # - Used for uploaded files and shared content
+  # - Can be backed up by exporting this volume
+  files:
+    driver: local
+
+  # Database volume
+  # - Contains SQLite database with user info, shares, etc.
+  # - BACKUP THIS VOLUME to preserve all settings
+  database:
+    driver: local
+
+  # Configuration volume
+  # - Contains custom CSS and theme settings
+  # - BACKUP THIS VOLUME to preserve customizations
+  config:
+    driver: local
+
+# ============================================================
+# INTERNAL NETWORK (Optional)
+# ============================================================
+# Uncomment the networks section at the top of this file
+# and add 'networks: [fb_network]' to the filebrowser service
+# to enable internal network-only mode
+#
+# With internal network, access FileBrowser via:
+# - Another service on the same network: http://filebrowser:80
+# - Reverse proxy on the same network
+#
+# Example reverse proxy service to add:
+# ============================================================
+#   nginx:
+#     image: nginx:latest
+#     container_name: nginx-proxy
+#     restart: unless-stopped
+#     ports:
+#       - "80:80"
+#       - "443:443"
+#     volumes:
+#       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+#       - ./data/certbot:/etc/letsencrypt:ro
+#     depends_on:
+#       - filebrowser
+#     networks:
+#       - fb_network
+#     command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+# ============================================================
+
+# ============================================================
+# USAGE EXAMPLES
+# ============================================================
+
+# 1. BASIC DEPLOYMENT (Direct port access)
+# ----------------------------------------
+# Just copy this file to docker-compose.yml and run:
+#   docker-compose up -d --build
+#
+# Access at: http://localhost:8080
+
+# 2. WITH CUSTOM FILE PATH
+# ----------------------------------------
+# Edit the volumes section:
+#   volumes:
+#     - /mnt/user/my_files:/srv  # Your files location
+#     - database:/database
+#     - config:/config
+
+# 3. WITH INTERNAL NETWORK (Behind Reverse Proxy)
+# ----------------------------------------
+# Step 1: Uncomment networks section at top
+# Step 2: Change ports to: ports: []
+# Step 3: Add to filebrowser service:
+#     networks:
+#       - fb_network
+# Step 4: Add reverse proxy service (see example above)
+
+# 4. WITH MULTIPLE SERVICES
+# ----------------------------------------
+# Add services like authelia, nginx, etc. on the same network
+# All services can communicate using service names as hostnames
