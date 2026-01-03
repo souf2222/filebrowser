@@ -1,270 +1,293 @@
 # Deployment Guide
 
-This guide covers various deployment methods for FileBrowser.
+This guide covers deployment of FileBrowser using Docker Compose with a self-built image.
 
-## Quick Start with Docker
+---
 
-The easiest way to deploy FileBrowser is using Docker:
+## Quick Start with Docker Compose
+
+### Prerequisites
+
+- Docker and Docker Compose installed
+- Git to clone the repository
+
+### Step 1: Clone the Repository
 
 ```bash
-docker run -d \
-  --name filebrowser \
-  -p 8080:80 \
-  -v /path/to/files:/srv \
-  -v filebrowser_data:/database \
-  -v filebrowser_config:/config \
-  filebrowser/filebrowser
+git clone https://github.com/your-username/filebrowser.git
+cd filebrowser
 ```
 
-Then access FileBrowser at http://localhost:8080
+### Step 2: Build and Deploy
+
+```bash
+docker-compose up -d --build
+```
+
+This will:
+1. Build the Docker image from the local source
+2. Start the container
+3. Mount the necessary volumes
+
+### Step 3: Access FileBrowser
+
+Access FileBrowser at http://localhost:8080
 
 Default credentials: `admin` / `admin`
 
 ---
 
-## Unraid Deployment
+## Docker Compose Configuration
 
-This section provides step-by-step instructions for deploying FileBrowser on Unraid.
+Create a `docker-compose.yml` file in the repository root:
+
+```yaml
+version: '3.8'
+
+services:
+  filebrowser:
+    build:
+      context: .
+      dockerfile: _docker/Dockerfile.slim
+    container_name: filebrowser
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - files:/srv
+      - database:/database
+      - config:/config
+    environment:
+      - FB_DATABASE=/database/filebrowser.db
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  files:
+    driver: local
+  database:
+    driver: local
+  config:
+    driver: local
+```
+
+### Configuration Options
+
+| Setting | Description |
+|---------|-------------|
+| `ports` | Map host port 8080 to container port 80 |
+| `volumes.files` | Your file storage location (add path mapping) |
+| `volumes.database` | Persistent database storage |
+| `volumes.config` | Persistent configuration storage |
+| `restart` | Container restart policy |
+
+### Customizing File Storage
+
+To use a specific host directory for files, modify the volumes section:
+
+```yaml
+volumes:
+  - /path/to/your/files:/srv
+  - database:/database
+  - config:/config
+```
+
+---
+
+## Unraid Deployment
 
 ### Prerequisites
 
 - Unraid 6.9.0 or later
-- Access to the Unraid web interface
-- A share configured for file storage (or create a new one)
+- Docker plugin enabled
+- Git plugin (optional, for cloning)
 
-### Method 1: Using Unraid's Docker Tab (Recommended)
+### Method 1: Using Docker Compose in Unraid
 
-#### Step 1: Open Docker Settings
+#### Step 1: Upload Files to Unraid
 
-1. Log in to your Unraid web interface
-2. Click on the **Docker** tab
-3. Click **Add Container**
+1. Enable SMB sharing on your Unraid server
+2. Copy the filebrowser repository to a share (e.g., `/mnt/user/appdata/filebrowser`)
+3. Or clone directly via terminal:
 
-#### Step 2: Configure Container
+```bash
+mkdir -p /mnt/user/appdata/filebrowser
+cd /mnt/user/appdata/filebrowser
+git clone https://github.com/your-username/filebrowser.git .
+```
 
-Fill in the following settings:
+#### Step 2: Create docker-compose.yml
+
+Create `docker-compose.yml` in the appdata folder:
+
+```yaml
+version: '3.8'
+
+services:
+  filebrowser:
+    build:
+      context: /mnt/user/appdata/filebrowser
+      dockerfile: _docker/Dockerfile.slim
+    container_name: filebrowser
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - /mnt/user/your_files:/srv
+      - filebrowser_db:/database
+      - filebrowser_config:/config
+    environment:
+      - FB_DATABASE=/database/filebrowser.db
+
+volumes:
+  filebrowser_db:
+    driver: local
+  filebrowser_config:
+    driver: local
+```
+
+#### Step 3: Deploy Using Command Line
+
+1. SSH into your Unraid server
+2. Run:
+
+```bash
+cd /mnt/user/appdata/filebrowser
+docker-compose up -d --build
+```
+
+#### Step 4: Verify in Unraid UI
+
+1. Go to **Docker** tab
+2. You should see the `filebrowser` container running
+3. Check logs if needed: `docker logs filebrowser`
+
+### Method 2: Using Unraid's Docker Tab (Manual Template)
+
+If you prefer not to use docker-compose:
+
+1. Go to **Docker** tab → **Add Container**
+2. Configure:
 
 | Setting | Value |
 |---------|-------|
 | **Name** | `filebrowser` |
-| **Repository** | `filebrowser/filebrowser` |
-| **Registry Tag** | `latest` (or specific version like `v3.0.0`) |
+| **Repository** | `filebrowser` (change to your image name) |
+| **Registry Tag** | `latest` |
 
-#### Step 3: Network Settings
+3. **Network**: Host or Bridge
+4. **Volumes**:
 
-| Setting | Value |
-|---------|-------|
-| **Network Type** | `Host` (or `Bridge` if you need a specific port) |
-| **Port** | `8080` (if using Bridge) |
+| Container Path | Host Path |
+|---------------|-----------|
+| `/srv` | `/mnt/user/your_files` |
+| `/database` | `/mnt/user/appdata/filebrowser/database` |
+| `/config` | `/mnt/user/appdata/filebrowser/config` |
 
-#### Step 4: Volume Settings
+5. **Ports** (if Bridge):
+   - `80` → `8080`
 
-Click **Add Path** for each mapping:
+6. **Extra Parameters**: `--restart=unless-stopped`
 
-| Container Path | Host Path | Description |
-|---------------|-----------|-------------|
-| `/srv` | `/mnt/user/your_share` | Your file storage location |
-| `/database` | `/mnt/user/appdata/filebrowser/database` | Database storage |
-| `/config` | `/mnt/user/appdata/filebrowser/config` | Configuration storage |
+---
 
-#### Step 5: Port Settings (if using Bridge)
+## Updating FileBrowser
 
-| Container Port | Host Port | Description |
-|---------------|-----------|-------------|
-| `80` | `8080` | Web interface port |
-
-#### Step 6: Extra Parameters
-
-Add these under **Extra Parameters**:
+### Using Docker Compose
 
 ```bash
---restart=always
---memory=512M
+cd /path/to/filebrowser
+git pull
+docker-compose up -d --build
 ```
 
-#### Step 7: Advanced Settings (Optional)
-
-For better performance, add these environment variables:
-
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `FB_DATABASE` | `/database/filebrowser.db` | Database location |
-| `FB_CONFIG` | `/config/settings.json` | Config file location |
-
-#### Step 8: Create Container
-
-1. Click **Apply** to create and start the container
-2. Wait for the container to initialize (check the logs)
-
-#### Step 9: Initial Login
-
-1. Access FileBrowser at `http://<unraid-ip>:8080`
-2. Login with default credentials:
-   - **Username**: `admin`
-   - **Password**: `admin`
-
-### Method 2: Using Unraid's Community Applications
-
-1. Go to the **Apps** tab in Unraid
-2. Search for "FileBrowser"
-3. Click **Install** on the official template
-4. Configure the settings as described above
-5. Click **Apply**
-
-### Method 3: Command Line (Via Terminal)
-
-1. SSH into your Unraid server
-2. Run the following command:
+### Manual Update (Unraid CLI)
 
 ```bash
-docker run -d \
-  --name filebrowser \
-  --restart=always \
-  -p 8080:80 \
-  -v /mnt/user/your_share:/srv \
-  -v /mnt/user/appdata/filebrowser/database:/database \
-  -v /mnt/user/appdata/filebrowser/config:/config \
-  filebrowser/filebrowser
+cd /mnt/user/appdata/filebrowser
+git pull
+docker-compose down
+docker-compose up -d --build
 ```
 
-### Configuration
+---
 
-#### Default Configuration
+## Custom Configuration
 
-FileBrowser uses reasonable defaults. To customize:
+### Environment Variables
 
-1. Create a configuration file at `/mnt/user/appdata/filebrowser/config/filebrowser.json`
-2. Restart the container
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FB_DATABASE` | `./filebrowser.db` | Database file path |
+| `FB_CONFIG` | `./config.json` | Configuration file path |
+| `FB_LOG_DIR` | `` | Log directory |
 
-Example configuration:
+### Creating Custom Config
 
-```json
+1. Create a config file:
+
+```bash
+mkdir -p /path/to/config
+cat > /path/to/config/settings.json <<EOF
 {
   "port": 80,
   "baseURL": "/",
   "logging": true,
-  "header": true,
   "theme": "dark"
 }
+EOF
 ```
 
-#### Setting Custom Admin Password
+2. Update docker-compose.yml:
 
-After first login, go to **Settings** > **User** and change the admin password.
+```yaml
+volumes:
+  - /path/to/your/files:/srv
+  - /path/to/config/settings.json:/config/settings.json
+  - database:/database
+```
 
-### Updating FileBrowser on Unraid
+---
 
-#### Via Docker Tab
+## Troubleshooting
 
-1. Go to the **Docker** tab
-2. Find the `filebrowser` container
-3. Click **Check for Updates** or change the tag to a newer version
-4. Click **Update** and restart the container
-
-#### Via Command Line
+### Container Won't Start
 
 ```bash
-# Pull the latest image
-docker pull filebrowser/filebrowser:latest
+# Check logs
+docker logs filebrowser
 
-# Stop and remove the old container
-docker stop filebrowser
-docker rm filebrowser
-
-# Start a new container with the same configuration
-docker run -d \
-  --name filebrowser \
-  --restart=always \
-  -p 8080:80 \
-  -v /mnt/user/your_share:/srv \
-  -v /mnt/user/appdata/filebrowser/database:/database \
-  -v /mnt/user/appdata/filebrowser/config:/config \
-  filebrowser/filebrowser:latest
+# Common issues:
+# - Port already in use (change host port in docker-compose.yml)
+# - Invalid volume paths (verify paths exist)
 ```
 
-### Troubleshooting
+### Can't Access Web Interface
 
-#### Container Won't Start
-
-1. Check logs:
-   ```bash
-   docker logs filebrowser
-   ```
-
-2. Common issues:
-   - Port already in use (change the host port)
-   - Invalid volume paths (verify paths exist)
-
-#### Can't Access Web Interface
-
-1. Verify the container is running:
+1. Verify container is running:
    ```bash
    docker ps | grep filebrowser
    ```
 
-2. Check firewall settings on Unraid
-3. Verify you're using the correct IP address
+2. Check firewall settings
+3. Verify correct IP address
 
-#### Permission Issues
-
-Ensure your file share has appropriate permissions:
+### Permission Issues
 
 ```bash
-# Fix permissions (if needed)
-chmod -R 755 /mnt/user/your_share
+# Fix permissions on file storage
+chmod -R 755 /path/to/your/files
 ```
-
-### Docker Compose (Alternative)
-
-For advanced users, create a `docker-compose.yml`:
-
-```yaml
-version: '3'
-
-services:
-  filebrowser:
-    image: filebrowser/filebrowser:latest
-    container_name: filebrowser
-    restart: always
-    ports:
-      - "8080:80"
-    volumes:
-      - /mnt/user/your_share:/srv
-      - ./data/database:/database
-      - ./data/config:/config
-    environment:
-      - FB_DATABASE=/database/filebrowser.db
-```
-
-Deploy with:
-```bash
-docker-compose up -d
-```
-
----
-
-## Synology NAS Deployment
-
-See [Synology Deployment Guide](DEPLOYMENT_SYNOLOGY.md)
-
----
-
-## Raspberry Pi Deployment
-
-See [Raspberry Pi Deployment Guide](DEPLOYMENT_PI.md)
 
 ---
 
 ## Production Deployment
 
-For production environments, consider:
-
-1. **Reverse Proxy**: Put FileBrowser behind Nginx or Caddy
-2. **HTTPS**: Enable SSL/TLS with Let's Encrypt
-3. **Authentication**: Configure proper auth methods
-4. **Backup**: Regular backups of database and config
-
-### Example with Nginx Reverse Proxy
+### Reverse Proxy with Nginx
 
 ```nginx
 server {
@@ -284,19 +307,44 @@ server {
         proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
----
+### Docker Compose with Production Settings
 
-## Environment Variables
+```yaml
+version: '3.8'
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FB_DATABASE` | `./filebrowser.db` | Database file path |
-| `FB_CONFIG` | `./config.json` | Configuration file path |
-| `FB_LOG_DIR` | `` | Log directory |
+services:
+  filebrowser:
+    build:
+      context: .
+      dockerfile: _docker/Dockerfile.slim
+    container_name: filebrowser
+    restart: always
+    ports:
+      - "127.0.0.1:8080:80"  # Listen only on localhost
+    volumes:
+      - /mnt/user/your_files:/srv
+      - filebrowser_db:/database
+      - filebrowser_config:/config
+    environment:
+      - FB_DATABASE=/database/filebrowser.db
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  filebrowser_db:
+    driver: local
+  filebrowser_config:
+    driver: local
+```
 
 ---
 
@@ -304,4 +352,3 @@ server {
 
 - **Issues**: https://github.com/filebrowser/filebrowser/issues
 - **Documentation**: https://filebrowser.com/docs
-- **Discord**: https://discord.gg/filebrowser

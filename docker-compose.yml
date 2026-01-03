@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  filebrowser:
+    build:
+      context: .
+      dockerfile: _docker/Dockerfile.slim
+    container_name: filebrowser
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      # Change this path to your file storage location
+      # Example: /mnt/user/your_files:/srv
+      - files:/srv
+      - database:/database
+      - config:/config
+    environment:
+      - FB_DATABASE=/database/filebrowser.db
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  # Named volume for files (data persists across container rebuilds)
+  # To use a host directory instead, replace with:
+  #   - /path/to/your/files:/srv
+  files:
+    driver: local
+  database:
+    driver: local
+  config:
+    driver: local
