@@ -113,7 +113,10 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 		}
 
 		if d.fileInfo.Path != "" && d.fileInfo.Type != "directory" {
-			previewPath := filepath.Base(strings.TrimSuffix(d.fileInfo.Path, "/"))
+			// For file shares, use the share path which already points to the file
+			// d.share.Path is like /filename.png/ for file shares
+			// We pass the path without the leading slash to the preview handler
+			previewPath := strings.TrimPrefix(strings.TrimSuffix(d.share.Path, "/"), "/")
 			previewURL := config.Server.BaseURL + "public/api/preview?hash=" + d.share.Hash + "&path=" + url.QueryEscape(previewPath) + "&size=large"
 			if d.share.Token != "" {
 				previewURL += "&token=" + url.QueryEscape(d.share.Token)
