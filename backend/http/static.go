@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -79,6 +80,12 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 	favicon := staticURL + "/favicon"
 	data := make(map[string]interface{})
 	disableNavButtons := settings.Config.Frontend.DisableNavButtons
+
+	ogTitle := title
+	ogDescription := description
+	ogImage := staticURL + "/img/icons/logo.svg"
+	ogURL := r.URL.String()
+
 	if d.share != nil && d.shareValid {
 		if d.share.Favicon != "" {
 			if strings.HasPrefix(d.share.Favicon, "http") {
@@ -89,15 +96,11 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 		}
 		if d.share.Description != "" {
 			description = d.share.Description
+			ogDescription = d.share.Description
 		}
 		if d.share.Title != "" {
 			title = d.share.Title
-		}
-		if d.share.ShareTheme != "" {
-			theme, ok := config.Frontend.Styling.CustomThemeOptions[d.share.ShareTheme]
-			if ok {
-				userSelectedTheme = theme.CssRaw
-			}
+			ogTitle = d.share.Title
 		}
 		if d.share.ShareTheme != "" {
 			theme, ok := config.Frontend.Styling.CustomThemeOptions[d.share.ShareTheme]
@@ -108,9 +111,26 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 		if d.share.DisableSidebar {
 			disableSidebar = true
 		}
+
+		if d.fileInfo.Path != "" && d.fileInfo.Type != "directory" {
+			previewPath := filepath.Base(strings.TrimSuffix(d.fileInfo.Path, "/"))
+			previewURL := config.Server.BaseURL + "public/api/preview?hash=" + d.share.Hash + "&path=" + url.QueryEscape(previewPath) + "&size=large"
+			if d.share.Token != "" {
+				previewURL += "&token=" + url.QueryEscape(d.share.Token)
+			}
+			ogImage = previewURL
+		} else if d.share.Banner != "" {
+			if strings.HasPrefix(d.share.Banner, "http") {
+				ogImage = d.share.Banner
+			} else {
+				ogImage = staticURL + "/" + d.share.Banner
+			}
+		}
 	}
+
 	// Set login icon URL
 	loginIcon := staticURL + "/loginIcon"
+
 	data["htmlVars"] = map[string]interface{}{
 		"title":             title,
 		"customCSS":         config.Frontend.Styling.CustomCSSRaw,
@@ -125,6 +145,10 @@ func handleWithStaticData(w http.ResponseWriter, r *http.Request, d *requestCont
 		"winIcon":           staticURL + "/img/icons/mstile-144x144.png",
 		"appIcon":           staticURL + "/img/icons/android-chrome-256x256.png",
 		"description":       description,
+		"ogTitle":           ogTitle,
+		"ogDescription":     ogDescription,
+		"ogImage":           ogImage,
+		"ogUrl":             ogURL,
 	}
 	// variables consumed by frontend as json
 	data["globalVars"] = map[string]interface{}{

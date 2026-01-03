@@ -237,8 +237,22 @@ func publicPreviewHandler(w http.ResponseWriter, r *http.Request, d *requestCont
 	if err != nil {
 		return http.StatusNotFound, fmt.Errorf("source not available")
 	}
+
+	// Get the path from URL query parameter (for OG image previews)
+	previewPath := r.URL.Query().Get("path")
+
+	// For file shares with OG preview, use the share path directly
+	var fullPath string
+	if previewPath != "" {
+		// When there's a preview path from URL, use d.share.Path directly
+		// This handles the case where d.share.Path already points to the file
+		fullPath = d.share.Path
+	} else {
+		fullPath = utils.JoinPathAsUnix(d.share.Path, d.fileInfo.Path)
+	}
+
 	fileInfo, err := FileInfoFasterFunc(utils.FileOptions{
-		Path:     utils.JoinPathAsUnix(d.share.Path, d.fileInfo.Path),
+		Path:     fullPath,
 		Source:   source,
 		Metadata: true,
 	}, nil)
