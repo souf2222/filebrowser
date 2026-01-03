@@ -16,10 +16,6 @@ services:
     build:
       context: .
       dockerfile: _docker/Dockerfile.slim
-      args:
-        # Optional: Specify version and revision
-        # VERSION: "testing"
-        # REVISION: "local"
 
     container_name: filebrowser
     restart: unless-stopped
