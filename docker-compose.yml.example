@@ -4,24 +4,13 @@
 version: '3.8'
 
 # ============================================================
-# NETWORK CONFIGURATION
+# SERVICES
 # ============================================================
-# Uncomment the networks section to create an internal network
-# This isolates FileBrowser from other services and allows
-# secure communication without exposing ports to the host
-# ============================================================
-
-# networks:
-#   fb_network:
-#     driver: bridge
-#     ipam:
-#       config:
-#         - subnet: 172.28.0.0/16
 
 services:
-  # ============================================================
+  # ----------------------------------------------------
   # FILEBROWSER SERVICE
-  # ============================================================
+  # ----------------------------------------------------
   filebrowser:
     # Build image from local source
     build:
@@ -36,20 +25,29 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
 
-    # ----------------------------------------------------
-    # PORT MAPPING
-    # ----------------------------------------------------
-    # Option 1: Direct host binding (exposes to host network)
-    # Uncomment to use:
-    ports:
-      - "8080:80"
+    # Enable Traefik labels for automatic discovery
+    labels:
+      - "traefik.enable=true"
+      # HTTP router
+      - "traefik.http.routers.filebrowser-http.rule=Host(`files.example.com`)"
+      - "traefik.http.routers.filebrowser-http.entrypoints=http"
+      - "traefik.http.routers.filebrowser-http.service=filebrowser"
+      # HTTPS router with automatic SSL
+      - "traefik.http.routers.filebrowser-https.rule=Host(`files.example.com`)"
+      - "traefik.http.routers.filebrowser-https.entrypoints=https"
+      - "traefik.http.routers.filebrowser-https.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.filebrowser-https.service=filebrowser"
+      # Redirect HTTP to HTTPS
+      - "traefik.http.routers.filebrowser-http.middlewares=redirect-https@fileproxy"
+      # FileBrowser service configuration
+      - "traefik.http.services.filebrowser.loadbalancer.server.port=80"
+      # Health check for Traefik
+      - "traefik.http.services.filebrowser.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.filebrowser.loadbalancer.healthcheck.interval=30s"
 
-    # Option 2: Use internal network only (no host ports exposed)
-    # Remove 'ports' section and uncomment below to use internal network
-    # Use this with a reverse proxy on the same network
-    # networks:
-    #   - fb_network
-    # ports: []  # Comment out ports section when using internal network
+    # Connect to Traefik network
+    networks:
+      - fb_network
 
     # ----------------------------------------------------
     # VOLUME MOUNTS
@@ -84,13 +82,9 @@ services:
       # Optional: Custom configuration file
       # - FB_CONFIG=/config/settings.json
 
-      # Optional: Enable debug logging
-      # - FB_LOG_LEVEL=debug
-
     # ----------------------------------------------------
     # HEALTHCHECK
     # ----------------------------------------------------
-    # Container health monitoring
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
       interval: 30s
@@ -98,108 +92,275 @@ services:
       retries: 3
       start_period: 10s
 
-    # ----------------------------------------------------
-    # RESOURCE LIMITS (Optional)
-    # ----------------------------------------------------
-    # Uncomment to limit container resources
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '1.0'
-    #       memory: 512M
-    #     reservations:
-    #       cpus: '0.5'
-    #       memory: 256M
+  # ----------------------------------------------------
+  # TRAEFIK REVERSE PROXY
+  # ----------------------------------------------------
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      # Global configuration
+      - "--global.checknewversion=false"
+      - "--global.sendanonymoususage=false"
+      # API configuration
+      - "--api.insecure=true"
+      # Dashboard (access at http://your-domain:8080)
+      - "--api.dashboard=true"
+      # Entry points
+      - "--entrypoints.http.address=:80"
+      - "--entrypoints.https.address=:443"
+      # Let's Encrypt configuration
+      - "--certificatesresolvers.letsencrypt.acme.email=your-email@example.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=http"
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.network=fb_network"
+      - "--providers.docker.exposedbydefault=false"
+      # Logging
+      - "--log.level=INFO"
 
-    # ----------------------------------------------------
-    # USER/PERMISSIONS (Optional)
-    # ----------------------------------------------------
-    # Run as specific user (UID:GID)
-    # user: "1000:1000"
+    ports:
+      # HTTP port (redirects to HTTPS)
+      - "80:80"
+      # HTTPS port
+      - "443:443"
+      # Traefik dashboard (optional - remove if not needed)
+      - "8080:8080"
+
+    volumes:
+      # Mount Docker socket for provider
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Let's Encrypt certificates storage
+      - letsencrypt:/letsencrypt
+      # Traefik static configuration
+      - ./traefik/traefik.yml:/traefik.yml:ro
+      # Optional: Dynamic configuration
+      # - ./traefik/dynamic.yml:/dynamic.yml:ro
+
+    networks:
+      - fb_network
+    labels:
+      # Enable Traefik on this container
+      - "traefik.enable=true"
+      # Dashboard
+      - "traefik.http.routers.traefik-http.rule=Host(`traefik.example.com`)"
+      - "traefik.http.routers.traefik-http.entrypoints=http"
+      - "traefik.http.routers.traefik-http.service=api@internal"
+      - "traefik.http.routers.traefik-http.middlewares=auth@file"
+      # HTTPS for dashboard
+      - "traefik.http.routers.traefik-https.rule=Host(`traefik.example.com`)"
+      - "traefik.http.routers.traekik-https.entrypoints=https"
+      - "traefik.http.routers.traefik-https.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-https.service=api@internal"
+
+    # Optional: Basic auth middleware for dashboard
+    # Create with: echo $(htpasswd -nb user "password") | sed 's/$/\\n/'
+    # Or use traefik-forward-auth for OAuth
+
+  # ----------------------------------------------------
+  # OPTIONAL: TRAEFIK FORWARD AUTH (OAuth)
+  # ----------------------------------------------------
+  # Uncomment to enable OAuth authentication via Traefik
+  # Requires authelia or similar OIDC provider
+  #
+  # traefik-forward-auth:
+  #   image: mesosphere/traefik-forward-auth:latest
+  #   container_name: traefik-forward-auth
+  #   restart: unless-stopped
+  #   environment:
+  #     - TRAEFIK_ADDRESS=http://traefik:80
+  #     - AUTH_HOST=auth.example.com
+  #     - OIDC_ISSUER_URL=https://your-oidc-provider.com
+  #     - OIDC_CLIENT_ID=your-client-id
+  #     - OIDC_CLIENT_SECRET=your-client-secret
+  #     - SECRET=your-random-secret-key
+  #   networks:
+  #     - fb_network
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.auth-http.rule=Host(`auth.example.com`)"
+  #     - "traefik.http.routers.auth-http.entrypoints=http"
+  #     - "traefik.http.routers.auth-https.rule=Host(`auth.example.com`)"
+  #     - "traefik.http.routers.auth-https.entrypoints=https"
+  #     - "traefik.http.routers.auth-https.tls.certresolver=letsencrypt"
+  #     - "traefik.http.services.auth.loadbalancer.server.port=4181"
 
 # ============================================================
-# NAMED VOLUMES
+# NETWORKS
 # ============================================================
-# These volumes persist data across container rebuilds
+networks:
+  fb_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ============================================================
+# VOLUMES
 # ============================================================
 volumes:
   # File storage volume
-  # - Used for uploaded files and shared content
-  # - Can be backed up by exporting this volume
   files:
     driver: local
 
   # Database volume
-  # - Contains SQLite database with user info, shares, etc.
-  # - BACKUP THIS VOLUME to preserve all settings
   database:
     driver: local
 
-  # Configuration volume
-  # - Contains custom CSS and theme settings
-  # - BACKUP THIS VOLUME to preserve customizations
+  # Config volume
   config:
     driver: local
 
+  # Let's Encrypt certificates volume
+  letsencrypt:
+    driver: local
+
 # ============================================================
-# INTERNAL NETWORK (Optional)
+# TRAEFIK CONFIGURATION FILE
 # ============================================================
-# Uncomment the networks section at the top of this file
-# and add 'networks: [fb_network]' to the filebrowser service
-# to enable internal network-only mode
+# Create this file as: traefik/traefik.yml
+# ----------------------------------------------------
+# global:
+#   checkNewVersion: false
+#   sendAnonymousUsage: false
 #
-# With internal network, access FileBrowser via:
-# - Another service on the same network: http://filebrowser:80
-# - Reverse proxy on the same network
+# api:
+#   dashboard: true
+#   insecure: true
 #
-# Example reverse proxy service to add:
+# providers:
+#   docker:
+#     endpoint: "unix:///var/run/docker.sock"
+#     network: "fb_network"
+#     exposedByDefault: false
+#   file:
+#     directory: "/dynamic"
+#     watch: true
+#
+# entryPoints:
+#   http:
+#     address: ":80"
+#     http:
+#       redirections:
+#         entryPoint:
+#           to: https
+#           scheme: https
+#           permanent: true
+#   https:
+#     address: ":443"
+#
+# certificatesResolvers:
+#   letsencrypt:
+#     acme:
+#       email: "your-email@example.com"
+#       storage: "/letsencrypt/acme.json"
+#       httpChallenge:
+#         entryPoint: http
+#
+# log:
+#   level: INFO
+# ----------------------------------------------------
+
 # ============================================================
-#   nginx:
-#     image: nginx:latest
-#     container_name: nginx-proxy
-#     restart: unless-stopped
-#     ports:
-#       - "80:80"
-#       - "443:443"
-#     volumes:
-#       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-#       - ./data/certbot:/etc/letsencrypt:ro
-#     depends_on:
-#       - filebrowser
-#     networks:
-#       - fb_network
-#     command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+# TRAEFIK DYNAMIC CONFIGURATION (Optional)
 # ============================================================
+# Create this file as: traefik/dynamic.yml
+# ----------------------------------------------------
+# http:
+#   routers:
+#     dashboard:
+#       rule: "Host(`traefik.example.com`)"
+#       service: api@internal
+#       middlewares:
+#         - auth
+#
+#   middlewares:
+#     auth:
+#       basicAuth:
+#         users:
+#           - "admin:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/"
+#     redirect-https:
+#       redirectScheme:
+#         scheme: https
+#         permanent: true
+#
+#   services:
+#     api:
+#       loadBalancer:
+#         servers:
+#           - url: "http://localhost:8080"
+# ----------------------------------------------------
 
 # ============================================================
 # USAGE EXAMPLES
 # ============================================================
 
-# 1. BASIC DEPLOYMENT (Direct port access)
+# 1. BASIC TRAEFIK DEPLOYMENT
 # ----------------------------------------
-# Just copy this file to docker-compose.yml and run:
+# Step 1: Create traefik/traefik.yml (see above)
+# Step 2: Update labels in filebrowser service with your domain
+# Step 3: Run:
+#   mkdir -p traefik letsencrypt
 #   docker-compose up -d --build
+
+# 2. MULTIPLE SUBDOMAINS
+# ----------------------------------------
+# Add more services with different subdomains:
 #
-# Access at: http://localhost:8080
-
-# 2. WITH CUSTOM FILE PATH
-# ----------------------------------------
-# Edit the volumes section:
-#   volumes:
-#     - /mnt/user/my_files:/srv  # Your files location
-#     - database:/database
-#     - config:/config
-
-# 3. WITH INTERNAL NETWORK (Behind Reverse Proxy)
-# ----------------------------------------
-# Step 1: Uncomment networks section at top
-# Step 2: Change ports to: ports: []
-# Step 3: Add to filebrowser service:
+#   another-service:
+#     image: another-service:latest
+#     container_name: another-service
 #     networks:
 #       - fb_network
-# Step 4: Add reverse proxy service (see example above)
+#     labels:
+#       - "traefik.enable=true"
+#       - "traefik.http.routers.another-http.rule=Host(`app.example.com`)"
+#       - "traefik.http.routers.another-http.entrypoints=http"
+#       - "traefik.http.routers.another-https.rule=Host(`app.example.com`)"
+#       - "traefik.http.routers.another-https.entrypoints=https"
+#       - "traefik.http.routers.another-https.tls.certresolver=letsencrypt"
+#       - "traefik.http.services.another.loadbalancer.server.port=80"
 
-# 4. WITH MULTIPLE SERVICES
+# 3. PATH-BASED ROUTING
 # ----------------------------------------
-# Add services like authelia, nginx, etc. on the same network
-# All services can communicate using service names as hostnames
+# Route different paths to different services:
+#
+#   - "traefik.http.routers.filebrowser.rule=Host(`example.com`) && PathPrefix(`/files`)"
+#   - "traefik.http.middlewares.filebrowser-stripprefix.stripprefix.prefixes=/files"
+#   - "traefik.http.routers.filebrowser-https.middlewares=filebrowser-stripprefix@docker"
+
+# 4. WILD CARD DOMAIN
+# ----------------------------------------
+# Use wildcard TLS certificate:
+#
+#   labels:
+#     - "traefik.http.routers.filebrowser-https.tls.domains[0].main=example.com"
+#     - "traefik.http.routers.filebrowser-https.tls.domains[0].sans=*.example.com"
+
+# ============================================================
+# INITIAL SETUP
+# ============================================================
+
+# Step 1: Copy this file to docker-compose.yml
+#   cp docker-compose.yml.example docker-compose.yml
+
+# Step 2: Create traefik configuration directory
+#   mkdir -p traefik letsencrypt
+
+# Step 3: Create traefik.yml (see example above)
+#   nano traefik/traefik.yml
+
+# Step 4: Update FileBrowser labels with your domain
+#   - Change `files.example.com` to your domain
+
+# Step 5: Update email for Let's Encrypt
+#   - Change `your-email@example.com` to your email
+
+# Step 6: Start the stack
+#   docker-compose up -d --build
+
+# Step 7: Access FileBrowser at https://files.example.com
+#   Access Traefik dashboard at https://traefik.example.com:8080
